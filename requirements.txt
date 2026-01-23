@@ -1,0 +1,19 @@
+streamlit
+pandas
+plotly
+yfinance
+pandas-ta-classic
+# LangChain core stack
+langchain>=0.2.0
+langchain-core>=0.2.0
+langchain-community>=0.2.0
+langchain-openai>=0.1.0
+langchain-text-splitters>=0.2.0
+langchain-huggingface>=0.0.1
+transformers
+sentence-transformers
+torch
+# Vector store
+faiss-cpu
+# LLM APIs
+openai

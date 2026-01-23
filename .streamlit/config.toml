@@ -1,0 +1,21 @@
+# Streamlit Cloud Configuration
+# Optimized for HuggingFace embeddings and memory management
+
+[client]
+showErrorDetails = true
+
+[server]
+# Increase memory allocation for HuggingFace model loading
+maxUploadSize = 10
+headless = true
+port = 8501
+
+[logger]
+level = "info"
+
+[theme]
+primaryColor = "#1f77b4"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f0f2f6"
+textColor = "#262730"
+font = "sans serif"
