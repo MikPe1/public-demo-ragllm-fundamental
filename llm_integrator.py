@@ -4,9 +4,7 @@ LLM Integration for multiple providers
 
 from typing import Optional
 from langchain_openai import ChatOpenAI
-from langchain_community.chat_models import ChatOllama
-from langchain_core.messages import HumanMessage, SystemMessage
-import os
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 
 class LLMIntegrator:
@@ -14,22 +12,26 @@ class LLMIntegrator:
     Integrates with multiple LLM providers via LangChain
     """
     
-    def __init__(self, provider: str, api_key: str):
+    def __init__(self, provider: str, api_key: Optional[str] = None):
         self.provider = provider
         self.api_key = api_key
         self.client = self._initialize_client()
     
     def _initialize_client(self):
         """Initialize LLM client based on provider"""
-        
+
         if self.provider == "OpenAI":
+            if not self.api_key:
+                raise ValueError("An OpenAI API key is required.")
             return ChatOpenAI(
-                model="gpt-4",
+                model="gpt-4o-mini",
                 api_key=self.api_key,
                 temperature=0.7
             )
-        
+
         elif self.provider == "DeepSeek":
+            if not self.api_key:
+                raise ValueError("A DeepSeek API key is required.")
             # DeepSeek is compatible with OpenAI API
             return ChatOpenAI(
                 model="deepseek-chat",
@@ -37,12 +39,17 @@ class LLMIntegrator:
                 base_url="https://api.deepseek.com/v1",
                 temperature=0.7
             )
-        
+
         elif self.provider == "Ollama (local)":
-            return ChatOllama(
-                model="llama2",
-                temperature=0.7
-            )
+            try:
+                from langchain_ollama import ChatOllama
+            except ImportError as error:
+                raise RuntimeError(
+                    "Ollama integration is unavailable. Install the "
+                    "langchain-ollama package or select OpenAI/DeepSeek."
+                ) from error
+
+            return ChatOllama(model="llama3.2", temperature=0.7)
         
         else:
             raise ValueError(f"Unsupported provider: {self.provider}")
@@ -60,23 +67,27 @@ class LLMIntegrator:
             Analysis text from LLM
         """
         
-        system_prompt = f"""You are a professional financial analyst specializing in equity research.
-Analyze the following financial metrics for {ticker} and provide insights.
+        system_prompt = f"""You are a professional equity-research analyst.
+    Assess {ticker} using only the financial metrics and evidence supplied below.
+    Do not invent facts, forecasts, or company history. Clearly label missing data.
 
 Financial Metrics:
 {self._format_metrics(metrics)}
 
-Provide a concise analysis focusing on:
-1. Financial health assessment
-2. Key strengths and concerns
-3. Valuation assessment
-4. Brief investment perspective
+    Evidence and retrieved documents:
+    {context or 'No additional evidence was supplied.'}
 
-Keep your response professional but accessible."""
+    Return a research-oriented assessment with these headings:
+    1. Evidence-based conclusion: attractive, mixed, weak, or insufficient data
+    2. Financial health and two-year trend
+    3. Valuation and key risks
+    4. Data limitations and what should be verified in official filings
+
+    Do not present this as personalized investment advice or certainty about future returns."""
         
         messages = [
             SystemMessage(content=system_prompt),
-            HumanMessage(content=context or f"Provide a financial analysis for {ticker}")
+            HumanMessage(content=f"Assess the investment case for {ticker} based on the evidence above.")
         ]
         
         try:
@@ -99,11 +110,11 @@ Keep your response professional but accessible."""
         """
         
         system_prompt = f"""You are a professional financial analyst.
-Answer questions about {ticker}'s financial analysis based on these metrics:
+    Answer questions about {ticker} using only these observed metrics:
 
 {self._format_metrics(metrics)}
 
-Be concise, accurate, and professional in your responses."""
+    If the data is insufficient, say so. Do not invent a value or imply personalized investment advice."""
         
         messages = [
             SystemMessage(content=system_prompt),
@@ -148,8 +159,7 @@ Be concise, accurate, and professional in your responses."""
             if msg["role"] == "user":
                 messages.append(HumanMessage(content=msg["content"]))
             elif msg["role"] == "assistant":
-                # In LangChain, we use SystemMessage or just track context
-                pass
+                messages.append(AIMessage(content=msg["content"]))
         
         try:
             response = self.client.invoke(messages)

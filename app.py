@@ -2,14 +2,16 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 import pandas_ta_classic as ta
+import hashlib
 from financial_calculator import FinancialCalculator
 from data_fetcher import YahooFinanceFetcher
 from llm_integrator import LLMIntegrator
 from diagnostics import diagnose_financial_data, print_diagnostics
 from rag_system import FinancialRAGSystem
 
-st.set_page_config(page_title="LLM-Powered Fundamental Analysis (RAG-Based)", layout="wide")
-st.title("LLM-Powered Fundamental Analysis (RAG-Based)")
+st.set_page_config(page_title="Fundamental Research Copilot", layout="wide")
+st.title("Fundamental Research Copilot")
+st.caption("Evidence-based fundamental analysis using financial statements, company context, and retrieval-augmented generation.")
 
 # NOTE: HuggingFace embeddings are automatically cached by Streamlit on first use.
 # This means the first startup may take 20-30s as the model downloads (~100MB).
@@ -30,47 +32,72 @@ if "financial_metrics" not in st.session_state:
     st.session_state.financial_metrics = {}
 if "llm_client" not in st.session_state:
     st.session_state.llm_client = None
+if "llm_client_signature" not in st.session_state:
+    st.session_state.llm_client_signature = None
 if "initial_summary_generated" not in st.session_state:
     st.session_state.initial_summary_generated = False
 if "rag_system" not in st.session_state:
     st.session_state.rag_system = None
 
 # Step 1: API Configuration
-st.header("Step 1: API Configuration")
+st.header("1. Configure the research model")
 col1, col2 = st.columns(2)
 
 with col1:
     provider = st.selectbox(
-        "Select LLM Provider:",
+        "LLM provider",
         ("OpenAI", "DeepSeek", "Ollama (local)"),
         key="provider_select"
     )
 
 with col2:
+    api_key_required = provider != "Ollama (local)"
     api_key = st.text_input(
-        f"Paste your API key for {provider}",
+        f"API key for {provider}" if api_key_required else "API key (not required for Ollama)",
         type="password",
+        disabled=not api_key_required,
         key="api_key_input",
-        help="Don't worry I don't store them i promise! :)"
+        help="The key is kept in Streamlit session state and is not written to disk."
     )
 
-if api_key and provider:
-    st.session_state.api_key = api_key
+if provider == "Ollama (local)":
+    st.info("Ollama runs locally and requires a running Ollama server with the selected model.")
+
+credentials_ready = bool(provider) and (bool(api_key) if api_key_required else True)
+if credentials_ready:
+    effective_api_key = api_key if api_key_required else None
+    client_signature = (
+        provider,
+        hashlib.sha256((effective_api_key or '').encode()).hexdigest(),
+    )
+    st.session_state.api_key = effective_api_key
     st.session_state.provider = provider
-    
-    # Initialize LLM client
+
     try:
-        if st.session_state.llm_client is None:
-            st.session_state.llm_client = LLMIntegrator(provider, api_key)
-        st.success("API credentials configured successfully")
+        credentials_changed = (
+            st.session_state.llm_client_signature is not None
+            and st.session_state.llm_client_signature != client_signature
+        )
+        if st.session_state.llm_client is None or credentials_changed:
+            st.session_state.llm_client = LLMIntegrator(provider, effective_api_key)
+            st.session_state.llm_client_signature = client_signature
+            if credentials_changed:
+                st.session_state.ticker_data_loaded = False
+                st.session_state.initial_summary_generated = False
+                st.session_state.conversation_history = []
+                st.session_state.rag_system = None
+        st.success("Research model configured")
     except Exception as e:
+        st.session_state.llm_client = None
+        st.session_state.llm_client_signature = None
         st.error(f"Failed to initialize LLM: {str(e)}")
+        st.stop()
 else:
-    st.warning("Please provide both LLM provider and API key to continue")
+    st.warning("Provide an API key to continue, or choose Ollama for a local model.")
     st.stop()
 
 # Step 2: Stock Ticker Input
-st.header("Step 2: Select Stock")
+st.header("2. Select a company")
 ticker = st.text_input(
     "Enter stock ticker (e.g., ORCL, AAPL, MSFT):",
     key="ticker_input",
@@ -93,18 +120,23 @@ if ticker and st.button("Load Financial Data", type="primary"):
                 formatted_metrics = calculator.format_metrics()
                 
                 # Get quarterly history for LLM context
-                quarterly_history = fetcher.get_quarterly_history(num_quarters=4)
+                quarterly_history = fetcher.get_quarterly_history(num_quarters=8)
+                annual_history = fetcher.get_annual_history(num_years=2)
+                company_profile = fetcher.get_company_profile()
                 
                 st.session_state.financial_metrics = {
                     'raw': metrics,
                     'formatted': formatted_metrics,
                     'financial_data': financial_data,
                     'fetcher': fetcher,
-                    'quarterly_history': quarterly_history
+                    'quarterly_history': quarterly_history,
+                    'annual_history': annual_history,
+                    'company_profile': company_profile,
                 }
                 
                 # Build RAG system
-                if st.session_state.api_key:
+                st.session_state.rag_system = None
+                if st.session_state.llm_client:
                     try:
                         rag_system = FinancialRAGSystem(
                             st.session_state.api_key,
@@ -113,9 +145,14 @@ if ticker and st.button("Load Financial Data", type="primary"):
                         rag_system.build_knowledge_base(
                             ticker,
                             financial_data,
-                            quarterly_history
+                            quarterly_history,
+                            annual_history,
+                            company_profile,
                         )
-                        st.session_state.rag_system = rag_system
+                        if rag_system.retriever is not None:
+                            st.session_state.rag_system = rag_system
+                        else:
+                            st.warning("RAG index could not be built; using direct model analysis.")
                     except Exception as rag_e:
                         st.warning(f"RAG system - using fallback: {str(rag_e)}")
                 
@@ -154,9 +191,9 @@ with st.expander("Data Diagnostics"):
 st.divider()
 
 # Quarterly comparison table with LTM
-st.subheader("Quarterly Performance & LTM Analysis")
+st.subheader("Quarterly performance & LTM analysis")
 try:
-    quarterly_history = st.session_state.financial_metrics['fetcher'].get_quarterly_history(num_quarters=4)
+    quarterly_history = st.session_state.financial_metrics['fetcher'].get_quarterly_history(num_quarters=8)
     
     # Format the dataframe for display
     display_df = quarterly_history.copy()
@@ -180,7 +217,7 @@ try:
     if 'EPS' in display_df.columns:
         display_df['EPS'] = display_df['EPS'].apply(
             lambda x: (
-                f"${x:.2f}" if (isinstance(x, (int, float)) and x > 0 and x == x) else "N/A"
+                f"${x:.2f}" if pd.notna(x) else "N/A"
             )
         )
     
@@ -189,9 +226,10 @@ try:
     
     # Show trend analysis
     with st.expander("Quarterly Trend Analysis"):
-        if len(quarterly_history) > 1:
+        if len(quarterly_history) > 2:
             ltm_row = quarterly_history.iloc[0]
             recent_q = quarterly_history.iloc[1]
+            prior_q = quarterly_history.iloc[2]
             
             col1, col2, col3 = st.columns(3)
             
@@ -215,27 +253,68 @@ try:
             
             with col3:
                 eps_val = ltm_row['EPS']
-                if isinstance(eps_val, (int, float)) and eps_val > 0 and eps_val == eps_val:  # NaN check
+                if pd.notna(eps_val):
                     st.metric("LTM EPS", f"${eps_val:.2f}")
                 else:
                     st.metric("LTM EPS", "N/A")
             
             # Growth metrics
-            st.write("**Recent Quarter vs LTM:**")
+            st.write("**Latest quarter vs previous quarter:**")
             try:
-                rev_growth = ((recent_q['Total Revenue'] - ltm_row['Total Revenue']) / ltm_row['Total Revenue'] * 100) if ltm_row['Total Revenue'] > 0 else 0
-                ni_growth = ((recent_q['Net Income'] - ltm_row['Net Income']) / ltm_row['Net Income'] * 100) if ltm_row['Net Income'] > 0 else 0
+                rev_growth = (
+                    (recent_q['Total Revenue'] - prior_q['Total Revenue'])
+                    / abs(prior_q['Total Revenue']) * 100
+                    if prior_q['Total Revenue'] else None
+                )
+                ni_growth = (
+                    (recent_q['Net Income'] - prior_q['Net Income'])
+                    / abs(prior_q['Net Income']) * 100
+                    if prior_q['Net Income'] else None
+                )
                 
                 col1, col2 = st.columns(2)
                 with col1:
-                    st.write(f"Revenue Growth: **{rev_growth:+.1f}%**")
+                    st.write(
+                        f"Revenue Growth: **{rev_growth:+.1f}%**" if rev_growth is not None else
+                        "Revenue Growth: **N/A**"
+                    )
                 with col2:
-                    st.write(f"Net Income Growth: **{ni_growth:+.1f}%**")
-            except:
-                pass
+                    st.write(
+                        f"Net Income Growth: **{ni_growth:+.1f}%**" if ni_growth is not None else
+                        "Net Income Growth: **N/A**"
+                    )
+            except (KeyError, TypeError, ValueError, ZeroDivisionError):
+                st.info("Quarter-over-quarter growth is unavailable for this ticker.")
                 
 except Exception as e:
     st.warning(f"Could not load quarterly data: {str(e)}")
+
+st.divider()
+
+st.subheader("Annual results: last two fiscal years")
+annual_history = st.session_state.financial_metrics.get('annual_history', pd.DataFrame())
+if annual_history.empty:
+    st.info("Annual statement data is not available for this company.")
+else:
+    annual_display = annual_history.copy()
+    annual_display['Date'] = annual_display['Date'].apply(
+        lambda value: value if isinstance(value, str) else pd.to_datetime(value).strftime('%Y-%m-%d')
+    )
+    for column in ['Total Revenue', 'Net Income', 'Operating Income']:
+        if column in annual_display.columns:
+            annual_display[column] = annual_display[column].apply(
+                lambda value: (
+                    f"${value / 1e9:.1f}B" if abs(value) >= 1e9 else
+                    f"${value / 1e6:.0f}M" if abs(value) >= 1e6 else
+                    f"${value:,.0f}"
+                )
+            )
+    if 'EPS' in annual_display.columns:
+        annual_display['EPS'] = annual_display['EPS'].apply(
+            lambda value: f"${value:.2f}" if pd.notna(value) else "N/A"
+        )
+    st.dataframe(annual_display, use_container_width=True, hide_index=True)
+    st.caption("Source: Yahoo Finance annual financial statements. Verify material claims against official filings.")
 
 st.divider()
 
@@ -368,34 +447,43 @@ except Exception as e:
 if st.session_state.ticker_data_loaded and not st.session_state.initial_summary_generated:
     with st.spinner("Generating AI summary..."):
         try:
-            # Prepare quarterly context
             quarterly_df = st.session_state.financial_metrics['quarterly_history'].copy()
-            quarterly_text = "Quarterly Performance (LTM + Last 4 Quarters):\n"
-            for idx, row in quarterly_df.iterrows():
-                quarterly_text += f"- {row['Date']}: Revenue ${row['Total Revenue']/1e9:.1f}B, Net Income ${row['Net Income']/1e9:.1f}B, EPS ${row['EPS']:.2f}\n"
-            
-            summary_prompt = f"""Provide a concise financial summary for {st.session_state.ticker}.
+            annual_df = st.session_state.financial_metrics.get('annual_history', pd.DataFrame())
+            profile = st.session_state.financial_metrics.get('company_profile', {})
+            evidence_context = [
+                f"Company profile: {profile.get('name', st.session_state.ticker)}; "
+                f"sector={profile.get('sector', 'N/A')}; industry={profile.get('industry', 'N/A')}; "
+                f"business summary={profile.get('business_summary', 'N/A')}",
+                "Observed key metrics:\n" + "\n".join(
+                    f"- {name}: {value}"
+                    for name, value in st.session_state.financial_metrics['formatted'].items()
+                ),
+                "Quarterly history (up to 8 quarters):\n" + quarterly_df.to_string(index=False),
+                "Annual history (up to 2 fiscal years):\n" + (
+                    annual_df.to_string(index=False) if not annual_df.empty else "N/A"
+                ),
+            ]
+            evidence_context = "\n\n".join(evidence_context)
 
-Key Metrics (LTM - Last Twelve Months):
-{quarterly_text}
+            summary_sources = []
+            if st.session_state.rag_system:
+                summary_result = st.session_state.rag_system.query(
+                    "Assess the company's financial health, two-year trend, valuation, risks, and data limitations.",
+                    st.session_state.llm_client,
+                )
+                summary_response = summary_result['answer']
+                summary_sources = summary_result.get('source_types', [])
+            else:
+                summary_response = st.session_state.llm_client.generate_financial_analysis(
+                    st.session_state.ticker,
+                    st.session_state.financial_metrics['formatted'],
+                    evidence_context,
+                )
 
-Focus on:
-1. Current valuation (P/E: {st.session_state.financial_metrics['formatted'].get('P/E Ratio', 'N/A')})
-2. Profitability (Operating Margin: {st.session_state.financial_metrics['formatted'].get('Operating Margin', 'N/A')}, ROE: {st.session_state.financial_metrics['formatted'].get('ROE', 'N/A')})
-3. Financial strength (Debt-to-Capital: {st.session_state.financial_metrics['formatted'].get('Debt-to-Capital', 'N/A')}, Interest Coverage: {st.session_state.financial_metrics['formatted'].get('Interest Coverage', 'N/A')})
-4. Quarterly trends (growth/decline)
-5. Brief investment perspective"""
-            
-            summary_response = st.session_state.llm_client.answer_question(
-                summary_prompt,
-                st.session_state.ticker,
-                st.session_state.financial_metrics['formatted']
-            )
-            
-            # Add to conversation history
             st.session_state.conversation_history.append({
                 "role": "assistant",
-                "content": summary_response
+                "content": summary_response,
+                "sources": summary_sources,
             })
             st.session_state.initial_summary_generated = True
             st.rerun()
@@ -415,6 +503,9 @@ for message in st.session_state.conversation_history:
     else:
         with st.chat_message("assistant"):
             st.write(message['content'])
+            sources = message.get('sources', [])
+            if sources:
+                st.caption("Retrieved evidence: " + ", ".join(sorted(set(sources))))
 
 # Input area for new question
 user_question = st.chat_input("Ask a follow-up question...")
@@ -429,6 +520,7 @@ if user_question:
     # Get LLM response using RAG
     with st.spinner("Generating response with financial data..."):
         try:
+            source_types = []
             if st.session_state.rag_system:
                 # Use RAG for retrieval-augmented response
                 rag_result = st.session_state.rag_system.query(
@@ -436,6 +528,7 @@ if user_question:
                     st.session_state.llm_client
                 )
                 response = rag_result["answer"]
+                source_types = rag_result.get("source_types", [])
             else:
                 # Fallback to direct LLM if RAG not available
                 response = st.session_state.llm_client.answer_question(
@@ -449,7 +542,8 @@ if user_question:
     # Add assistant response to history
     st.session_state.conversation_history.append({
         "role": "assistant",
-        "content": response
+        "content": response,
+        "sources": source_types,
     })
     
     # Rerun to show both messages cleanly

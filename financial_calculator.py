@@ -72,7 +72,7 @@ class FinancialCalculator:
             return None
         if ebit is None or ebit == 0:
             return None
-        return ebit / interest_expense
+        return ebit / abs(interest_expense)
     
     def calculate_ev_to_ebit(self, market_cap: float, total_debt: float, 
                              cash: float, ebit: float) -> float:
@@ -189,10 +189,10 @@ class FinancialCalculator:
         
         for metric_name, value in self.metrics.items():
             # Check if value is None or invalid
-            if value is None or (isinstance(value, float) and (value == 0 or value != value)):  # NaN check
+            if value is None or (isinstance(value, float) and value != value):  # NaN check
                 formatted[metric_name] = "N/A"
             elif metric_name == 'EPS':
-                if value is None or value <= 0:
+                if value is None:
                     formatted[metric_name] = "N/A"
                 else:
                     formatted[metric_name] = f"${value:.2f}"
@@ -202,12 +202,12 @@ class FinancialCalculator:
                 else:
                     formatted[metric_name] = f"{value:.2f}x"
             elif metric_name == 'ROE':
-                if value is None or value <= 0:
+                if value is None:
                     formatted[metric_name] = "N/A"
                 else:
                     formatted[metric_name] = f"{value:.2f}%"
             elif metric_name in ['Debt-to-Capital', 'Operating Margin']:
-                if value is None or value < 0:
+                if value is None:
                     formatted[metric_name] = "N/A"
                 else:
                     formatted[metric_name] = f"{value:.2f}%"

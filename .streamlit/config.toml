@@ -2,7 +2,7 @@
 # Optimized for HuggingFace embeddings and memory management
 
 [client]
-showErrorDetails = true
+showErrorDetails = false
 
 [server]
 # Increase memory allocation for HuggingFace model loading
