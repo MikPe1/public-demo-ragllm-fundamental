@@ -114,15 +114,15 @@ if ticker and st.button("Load Financial Data", type="primary"):
                 st.session_state.ticker = ticker
                 st.session_state.ticker_data_loaded = True
                 
+                quarterly_history = fetcher.get_quarterly_history(num_quarters=8)
+                annual_history = fetcher.get_annual_history(num_years=2)
+                financial_data.update(fetcher.calculate_growth_metrics(annual_history))
+
                 # Calculate metrics
                 calculator = FinancialCalculator(ticker)
                 metrics = calculator.calculate_all_metrics(financial_data)
                 formatted_metrics = calculator.format_metrics()
                 
-                # Get quarterly history for LLM context
-                quarterly_history = fetcher.get_quarterly_history(num_quarters=8)
-                annual_history = fetcher.get_annual_history(num_years=2)
-                financial_data.update(fetcher.calculate_growth_metrics(annual_history))
                 company_profile = fetcher.get_company_profile()
                 
                 st.session_state.financial_metrics = {
