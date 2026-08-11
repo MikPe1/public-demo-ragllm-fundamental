@@ -53,6 +53,10 @@ class LLMIntegrator:
         
         else:
             raise ValueError(f"Unsupported provider: {self.provider}")
+
+    def invoke(self, messages):
+        """Expose the LangChain invocation contract to integrations such as RAG."""
+        return self.client.invoke(messages)
     
     def generate_financial_analysis(self, ticker: str, metrics: dict, context: str) -> str:
         """
