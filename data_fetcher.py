@@ -145,6 +145,43 @@ class YahooFinanceFetcher:
 
         return ltm_data
 
+    def calculate_ltm_cash_flow(self) -> Dict:
+        """Aggregate available quarterly cash-flow line items for the LTM period."""
+        quarterly_cash_flow = self.get_cash_flow("quarterly")
+        cash_flow_dates = self._valid_dates(quarterly_cash_flow, limit=4)
+        if not cash_flow_dates:
+            return {}
+
+        field_labels = {
+            'Operating Cash Flow': [
+                'Operating Cash Flow',
+                'Total Cash From Operating Activities',
+            ],
+            'Capital Expenditure': [
+                'Capital Expenditure',
+                'Capital Expenditures',
+            ],
+            'Free Cash Flow': ['Free Cash Flow'],
+            'Depreciation And Amortization': [
+                'Depreciation And Amortization',
+                'Depreciation',
+            ],
+        }
+        ltm_cash_flow = {}
+
+        for field_name, labels in field_labels.items():
+            values = [
+                self._statement_value(
+                    quarterly_cash_flow, labels, date, default=None
+                )
+                for date in cash_flow_dates
+            ]
+            numeric_values = [value for value in values if value is not None]
+            if numeric_values:
+                ltm_cash_flow[field_name] = float(sum(numeric_values))
+
+        return ltm_cash_flow
+
     def get_company_profile(self) -> Dict:
         """Return non-market company context available from Yahoo Finance."""
         try:
@@ -192,6 +229,32 @@ class YahooFinanceFetcher:
             })
 
         return pd.DataFrame(rows)
+
+    @staticmethod
+    def calculate_growth_metrics(annual_history: pd.DataFrame) -> Dict:
+        """Calculate two-year growth rates from the oldest and newest annual values."""
+        if annual_history is None or len(annual_history) < 2:
+            return {}
+
+        oldest = annual_history.iloc[0]
+        newest = annual_history.iloc[-1]
+        growth_metrics = {}
+        fields = {
+            'Total Revenue': 'revenue_growth_yoy',
+            'Net Income': 'net_income_growth_yoy',
+            'Operating Income': 'operating_income_growth_yoy',
+            'EPS': 'eps_growth_yoy',
+        }
+
+        for source_field, target_field in fields.items():
+            baseline = pd.to_numeric(oldest.get(source_field), errors='coerce')
+            current = pd.to_numeric(newest.get(source_field), errors='coerce')
+            if pd.notna(baseline) and pd.notna(current) and baseline != 0:
+                growth_metrics[target_field] = float(
+                    (current - baseline) / abs(baseline) * 100
+                )
+
+        return growth_metrics
     
     def extract_financial_data(self, period: str = "quarterly") -> Dict:
         """
@@ -200,6 +263,7 @@ class YahooFinanceFetcher:
         Balance sheet uses current period (quarterly)
         """
         ltm_data = self.calculate_ltm()
+        ltm_cash_flow = self.calculate_ltm_cash_flow()
         balance_sheet = self.get_balance_sheet("quarterly")
         quarterly_income = self.get_income_statement("quarterly")
 
@@ -243,6 +307,23 @@ class YahooFinanceFetcher:
         if total_debt == 0:
             total_debt = short_term_debt + long_term_debt
 
+        operating_cash_flow = ltm_cash_flow.get('Operating Cash Flow')
+        capital_expenditure = ltm_cash_flow.get('Capital Expenditure')
+        free_cash_flow = ltm_cash_flow.get('Free Cash Flow')
+        if free_cash_flow is None and operating_cash_flow is not None and capital_expenditure is not None:
+            cash_outflow = abs(capital_expenditure)
+            free_cash_flow = operating_cash_flow - cash_outflow
+
+        depreciation_and_amortization = ltm_cash_flow.get(
+            'Depreciation And Amortization'
+        )
+        ebit = ltm_data.get('EBIT', ltm_data.get('Operating Income', 0))
+        ebitda = (
+            ebit + abs(depreciation_and_amortization)
+            if depreciation_and_amortization is not None
+            else None
+        )
+
         financial_data = {
             'total_revenue': ltm_data.get('Total Revenue', 0),
             'cost_of_revenue': ltm_data.get('Cost of Revenue', 0),
@@ -250,7 +331,12 @@ class YahooFinanceFetcher:
             'operating_income': ltm_data.get('Operating Income', 0),
             'net_income': ltm_data.get('Net Income', 0),
             'interest_expense': ltm_data.get('Interest Expense', 0),
-            'ebit': ltm_data.get('EBIT', ltm_data.get('Operating Income', 0)),
+            'ebit': ebit,
+            'ebitda': ebitda,
+            'operating_cash_flow': operating_cash_flow,
+            'capital_expenditure': capital_expenditure,
+            'free_cash_flow': free_cash_flow,
+            'depreciation_and_amortization': depreciation_and_amortization,
             'cash': cash,
             'current_assets': self._statement_value(balance_sheet, ['Current Assets'], latest_balance_date),
             'accounts_receivable': self._statement_value(

@@ -108,7 +108,12 @@ class FinancialRAGSystem:
             self.retriever = None
 
     @staticmethod
-    def _safe_ratio(numerator: float, denominator: float, suffix: str = '') -> str:
+    def _safe_ratio(
+        numerator: float,
+        denominator: float,
+        suffix: str = '',
+        as_percent: bool = False,
+    ) -> str:
         """Format a ratio without turning missing data into a fake zero."""
         if numerator is None or denominator in (None, 0):
             return 'N/A'
@@ -117,7 +122,10 @@ class FinancialRAGSystem:
             denominator = float(denominator)
             if pd.isna(numerator) or pd.isna(denominator) or denominator == 0:
                 return 'N/A'
-            return f'{numerator / denominator:.2f}{suffix}'
+            ratio = numerator / denominator
+            if as_percent:
+                ratio *= 100
+            return f'{ratio:.2f}{suffix}'
         except (TypeError, ValueError):
             return 'N/A'
 
@@ -198,12 +206,16 @@ Investment perspective: Higher ratios may indicate growth expectations or market
         interest_expense = financial_data.get('interest_expense', 0)
         current_liabilities = financial_data.get('current_liabilities', 0)
         operating_margin = self._safe_ratio(
-            financial_data.get('operating_income', 0), revenue, '%'
+            financial_data.get('operating_income', 0), revenue, '%', as_percent=True
         )
-        roe = self._safe_ratio(financial_data.get('net_income', 0), equity, '%')
-        gross_margin = self._safe_ratio(financial_data.get('gross_profit', 0), revenue, '%')
+        roe = self._safe_ratio(
+            financial_data.get('net_income', 0), equity, '%', as_percent=True
+        )
+        gross_margin = self._safe_ratio(
+            financial_data.get('gross_profit', 0), revenue, '%', as_percent=True
+        )
         debt_to_capital = self._safe_ratio(
-            financial_data.get('total_debt', 0), total_capital, '%'
+            financial_data.get('total_debt', 0), total_capital, '%', as_percent=True
         )
         interest_coverage = self._safe_ratio(ebit, abs(interest_expense), 'x')
         quick_ratio = self._safe_ratio(
@@ -211,6 +223,71 @@ Investment perspective: Higher ratios may indicate growth expectations or market
             current_liabilities,
             'x',
         )
+        current_ratio = self._safe_ratio(
+            financial_data.get('current_assets'), current_liabilities, 'x'
+        )
+        fcf_margin = self._safe_ratio(
+            financial_data.get('free_cash_flow'), revenue, '%', as_percent=True
+        )
+        cash_conversion = self._safe_ratio(
+            financial_data.get('operating_cash_flow'),
+            financial_data.get('net_income'),
+            'x',
+        )
+        net_debt_to_ebitda = self._safe_ratio(
+            financial_data.get('total_debt', 0) - financial_data.get('cash', 0),
+            financial_data.get('ebitda'),
+            'x',
+        )
+        ev_to_ebitda = self._safe_ratio(
+            financial_data.get('market_cap', 0)
+            + financial_data.get('total_debt', 0)
+            - financial_data.get('cash', 0),
+            financial_data.get('ebitda'),
+            'x',
+        )
+        fcf_yield = self._safe_ratio(
+            financial_data.get('free_cash_flow'),
+            financial_data.get('market_cap'),
+            '%',
+            as_percent=True,
+        )
+
+        growth_text = f"""
+ANNUAL GROWTH METRICS FOR {ticker}:
+- Revenue Growth YoY: {self._format_metric(financial_data.get('revenue_growth_yoy'), '%')}
+- Net Income Growth YoY: {self._format_metric(financial_data.get('net_income_growth_yoy'), '%')}
+- Operating Income Growth YoY: {self._format_metric(financial_data.get('operating_income_growth_yoy'), '%')}
+- EPS Growth YoY: {self._format_metric(financial_data.get('eps_growth_yoy'), '%')}
+
+Growth rates compare the oldest and newest available annual periods. They do not establish
+that future growth will continue.
+"""
+        documents.append(Document(
+            page_content=growth_text,
+            metadata={'type': 'annual_growth', 'ticker': ticker, 'source': 'Yahoo Finance'},
+        ))
+
+        cash_flow_text = f"""
+CASH FLOW AND LEVERAGE ANALYSIS FOR {ticker} (LTM):
+- Operating Cash Flow: {self._format_amount(financial_data.get('operating_cash_flow'))}
+- Capital Expenditure: {self._format_amount(financial_data.get('capital_expenditure'))}
+- Free Cash Flow: {self._format_amount(financial_data.get('free_cash_flow'))}
+- EBITDA: {self._format_amount(financial_data.get('ebitda'))}
+- FCF Margin: {fcf_margin}
+- Operating Cash Flow / Net Income: {cash_conversion}
+- Current Ratio: {current_ratio}
+- Net Debt / EBITDA: {net_debt_to_ebitda}
+- EV/EBITDA: {ev_to_ebitda}
+- FCF Yield: {fcf_yield}
+
+Cash flow quality should be interpreted together with capital intensity, working capital,
+and one-off items. EBITDA is not the same as free cash flow.
+"""
+        documents.append(Document(
+            page_content=cash_flow_text,
+            metadata={'type': 'cash_flow', 'ticker': ticker, 'source': 'Yahoo Finance'},
+        ))
 
         # 2. PROFITABILITY DOCUMENT
         profitability_text = f"""
@@ -280,7 +357,7 @@ REVENUE ANALYSIS:
 - Total Revenue (LTM): ${financial_data.get('total_revenue', 0):,.0f}
 - Cost of Revenue: ${financial_data.get('cost_of_revenue', 0):,.0f}
 - Gross Profit: ${financial_data.get('gross_profit', 0):,.0f}
-- Gross Margin: {(financial_data.get('gross_profit', 0) / financial_data.get('total_revenue', 1) * 100):.1f}%
+- Gross Margin: {gross_margin}
 
 Revenue quality assessment:
 - Consistent revenue growth indicates strong market position
@@ -290,6 +367,20 @@ Revenue quality assessment:
         documents.append(Document(page_content=revenue_text, metadata={"type": "revenue_analysis", "ticker": ticker}))
         
         return documents
+
+    @staticmethod
+    def _format_amount(value: Optional[float]) -> str:
+        """Format an absolute financial amount while preserving unavailable data."""
+        if value is None or pd.isna(value):
+            return 'N/A'
+        return f'${float(value):,.0f}'
+
+    @staticmethod
+    def _format_metric(value: Optional[float], suffix: str = '') -> str:
+        """Format a derived metric without replacing missing data with zero."""
+        if value is None or pd.isna(value):
+            return 'N/A'
+        return f'{float(value):.2f}{suffix}'
     
     def get_rag_chain(self, llm_client) -> Any:
         """

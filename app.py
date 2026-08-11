@@ -122,6 +122,7 @@ if ticker and st.button("Load Financial Data", type="primary"):
                 # Get quarterly history for LLM context
                 quarterly_history = fetcher.get_quarterly_history(num_quarters=8)
                 annual_history = fetcher.get_annual_history(num_years=2)
+                financial_data.update(fetcher.calculate_growth_metrics(annual_history))
                 company_profile = fetcher.get_company_profile()
                 
                 st.session_state.financial_metrics = {
@@ -173,12 +174,91 @@ st.header(f"Financial Analysis for {st.session_state.ticker}")
 st.subheader("Key Financial Metrics")
 col1, col2, col3, col4 = st.columns(4)
 
+metric_help = {
+    'EPS': (
+        'Earnings per share: profit attributable to each share. Higher or growing EPS '
+        'can indicate improving profitability, but check dilution and one-off items.'
+    ),
+    'P/E Ratio': (
+        'Price-to-earnings ratio: share price divided by earnings per share. A higher '
+        'multiple means the market is paying more for each unit of current earnings.'
+    ),
+    'ROE': (
+        'Return on equity: net income divided by shareholders equity. It measures how '
+        'efficiently the company generates profit from book equity; leverage can inflate it.'
+    ),
+    'Debt-to-Capital': (
+        'Debt-to-capital ratio: total debt divided by debt plus equity. Higher values '
+        'indicate greater financial leverage and refinancing sensitivity.'
+    ),
+    'Interest Coverage': (
+        'Interest coverage: EBIT divided by interest expense. It estimates how comfortably '
+        'operating profit can cover interest costs; lower values indicate more risk.'
+    ),
+    'EV/EBIT': (
+        'Enterprise value to EBIT: operating valuation relative to EBIT, including debt '
+        'and cash. Compare it with peers and growth, not in isolation.'
+    ),
+    'Operating Margin': (
+        'Operating margin: operating income as a percentage of revenue. It shows how much '
+        'revenue remains after operating costs, before interest and taxes.'
+    ),
+    'Quick Ratio': (
+        'Quick ratio: liquid assets divided by current liabilities, excluding inventory. '
+        'It indicates near-term ability to meet obligations.'
+    ),
+    'Gross Margin': (
+        'Gross margin: gross profit as a percentage of revenue. It reflects pricing power '
+        'and the direct cost of delivering products or services.'
+    ),
+    'Current Ratio': (
+        'Current ratio: current assets divided by current liabilities. It measures broad '
+        'short-term liquidity, including inventory.'
+    ),
+    'EBITDA': (
+        'EBITDA: earnings before interest, taxes, depreciation, and amortization. It is a '
+        'rough operating cash-earning proxy, not actual cash flow.'
+    ),
+    'Free Cash Flow': (
+        'Free cash flow: operating cash flow minus capital expenditure. Positive FCF can '
+        'fund debt repayment, reinvestment, or shareholder returns.'
+    ),
+    'FCF Margin': (
+        'FCF margin: free cash flow as a percentage of revenue. It shows how much revenue '
+        'is converted into cash after capital expenditure.'
+    ),
+    'Operating CF / Net Income': (
+        'Cash conversion: operating cash flow divided by net income. Values around or above '
+        '1.0x generally indicate that reported earnings are converting into cash.'
+    ),
+    'Net Debt / EBITDA': (
+        'Net debt to EBITDA: debt after cash divided by EBITDA. Higher values indicate more '
+        'leverage relative to operating earnings; negative values mean net cash.'
+    ),
+    'EV/EBITDA': (
+        'Enterprise value to EBITDA: a capital-structure-aware valuation multiple. Compare '
+        'it with peers and growth expectations.'
+    ),
+    'FCF Yield': (
+        'FCF yield: free cash flow divided by market capitalization. It estimates the cash '
+        'return implied by the current equity value.'
+    ),
+    'Revenue Growth YoY': 'Year-over-year change in annual revenue.',
+    'Net Income Growth YoY': 'Year-over-year change in annual net income.',
+    'Operating Income Growth YoY': 'Year-over-year change in annual operating income.',
+    'EPS Growth YoY': 'Year-over-year change in annual earnings per share.',
+}
+
 formatted_metrics = st.session_state.financial_metrics['formatted']
 metric_items = list(formatted_metrics.items())
 
 for idx, (metric_name, metric_value) in enumerate(metric_items):
     with [col1, col2, col3, col4][idx % 4]:
-        st.metric(label=metric_name, value=metric_value)
+        st.metric(
+            label=metric_name,
+            value=metric_value,
+            help=metric_help.get(metric_name),
+        )
 
 st.divider()
 

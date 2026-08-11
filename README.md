@@ -10,6 +10,7 @@ For a ticker, the application:
 
 - retrieves company profile information and financial statements through `yfinance`;
 - calculates LTM metrics such as EPS, P/E, ROE, debt-to-capital, interest coverage, EV/EBIT, operating margin, and quick ratio;
+- calculates additional cash-flow and trend metrics such as gross margin, FCF margin, cash conversion, current ratio, net debt/EBITDA, EV/EBITDA, FCF yield, EBITDA, and two-year growth rates;
 - displays up to two fiscal years of annual results and up to eight quarters of history;
 - builds an in-memory FAISS index from company context, annual statements, quarterly results, valuation, profitability, financial health, and revenue documents;
 - retrieves relevant evidence for an LLM response and displays the document types used;

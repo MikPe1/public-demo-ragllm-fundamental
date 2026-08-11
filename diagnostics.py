@@ -31,7 +31,13 @@ def diagnose_financial_data(financial_data: dict) -> dict:
         'total_revenue': 'Total Revenue',
         'marketable_securities': 'Marketable Securities',
         'accounts_receivable': 'Accounts Receivable',
-        'current_liabilities': 'Current Liabilities'
+        'current_liabilities': 'Current Liabilities',
+        'current_assets': 'Current Assets',
+        'operating_cash_flow': 'Operating Cash Flow',
+        'capital_expenditure': 'Capital Expenditure',
+        'free_cash_flow': 'Free Cash Flow',
+        'ebitda': 'EBITDA',
+        'depreciation_and_amortization': 'Depreciation & Amortization',
     }
     
     for key, label in critical_fields.items():
